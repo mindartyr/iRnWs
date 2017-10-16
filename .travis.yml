@@ -1,4 +1,8 @@
 language: python
+services:
+  - postgresql
+script:
+  - pytest app.py
 deploy:
   provider: heroku
   api_key:
