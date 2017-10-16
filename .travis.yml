@@ -1,0 +1,29 @@
+sudo: false
+language: python
+services:
+  - postgresql
+branches:
+  only:
+    - master
+cache:
+  directories:
+    - "$HOME/.cache"
+env:
+  global:
+    secure: RPClDmwFZnpBIKtMvlzjzZVam4flvJtSvxFD8mHCQVQ//KqyBbQxl970kqStOK7p0RXkOB3XuFDvVixqyuptoQ8wTdgSBEPAub4DwRpcmCc1exzErHIt9zep3cQhSUuzl8N/tNl3o6GG04NsZTeErORqxfDvk3WbqFa9593G358=
+addons:
+  apt:
+    sources:
+      - deadsnakes
+    packages:
+      - portaudio19-dev
+      - python3.6
+      - python3.6-dev
+install:
+  - pip install --upgrade pip
+  - pip install -r requirements.txt
+deploy:
+  provider: heroku
+  api_key:
+    secure: 0MnlhEcxA0PWHOqsGE7lCKFfcD7ucv7QJBbdYR7OBDiJNAeSLApr1Tq/tsMIihqTFwjd0fsC0fZXmn9dHvRmdEU/TIICvQkYNHnkEe82+u20yh+FT8kJtZ+UItL3n0SzcXSo/tFtE7znEiYGXYdIt1+oNEBlhn3gvVgOG8ixWOHzS3Wut5i1vAwT6dy+qw+6gr9p4yKIkWj4xFhNbJMkJsMLF8QJNE/Ju91pS8xbr+XlMrNFWMUsmiFv1KBmdE1IJYaQ/p5XAEZlHfsz2YanWiOdQO7DFhwpmnMKyp2+RkU/6gMxlAD6P+Tm7tzG9tXtr9bxCRDp9Ff7a8Q0kbZv6/cFrjYey0lsQghxsigUy1AcBq9yFyfCCEOiOK6FI5/Uwp0+lO67t/+6GomZdlrVTRKVpNamsQGXUclvEJWTPhiQ4A4SoaWsSjNZ0pRt4eKu0j02zbsNN+1aF8nohaRy6nnaz534yFLzqlnsq+axdGjt50r8uAKwvIu6tilRxAQXZWDekZw952SRRqLwqVrrbigyh18EUlbEt75PlW0HSy1QH5Yz4pWRES1/OuGHLC6KjcLvDdeYZeGZW0fSjbZSBygbwf2gCLupnNOxWvg6GnEpBJOheG8QhpunO1FOlK8TqDhoJM3LLbXP4f3w9flEagTAZX2TtmcqaTIu8Yz6Q7M=
+  app: chipakraken
