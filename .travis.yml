@@ -11,14 +11,6 @@ cache:
 env:
   global:
     secure: RPClDmwFZnpBIKtMvlzjzZVam4flvJtSvxFD8mHCQVQ//KqyBbQxl970kqStOK7p0RXkOB3XuFDvVixqyuptoQ8wTdgSBEPAub4DwRpcmCc1exzErHIt9zep3cQhSUuzl8N/tNl3o6GG04NsZTeErORqxfDvk3WbqFa9593G358=
-addons:
-  apt:
-    sources:
-      - deadsnakes
-    packages:
-      - portaudio19-dev
-      - python3.6
-      - python3.6-dev
 install:
   - pip install --upgrade pip
   - pip install -r requirements.txt
