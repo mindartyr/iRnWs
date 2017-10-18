@@ -1,6 +1,13 @@
+import os
 from flask import Flask, render_template, jsonify, abort, request
 import search_backend
+from search_backend.text_index import TextIndex
+
 app = Flask(__name__)
+
+DATA_PATH = 'data/python-3.6.3-docs-text'
+
+text_index = TextIndex().build_index(DATA_PATH)
 
 
 @app.route("/")
