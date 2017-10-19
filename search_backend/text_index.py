@@ -32,7 +32,7 @@ class TextIndex:
         return self
 
     def process_text(self, text, file_id):
-        for start, end, stemmed_word in self.tokenizer_stemmer.tokenize_and_stem(text):
+        for start, end, stemmed_word in self.tokenizer_stemmer.tokenize(text):
             if file_id not in self.word_occurrences[stemmed_word]:
                 self.word_occurrences[stemmed_word][file_id] = [start]
             else:
@@ -42,7 +42,7 @@ class TextIndex:
         terms = []
         matched_docs = []
 
-        for _, _, stemmed_word in self.tokenizer_stemmer.tokenize_and_stem(query):
+        for _, _, stemmed_word in self.tokenizer_stemmer.tokenize(query):
             terms.append(stemmed_word)
 
         for document_id in self.get_docs_for_and_query(terms):
