@@ -3,6 +3,7 @@ import os
 from nltk.tokenize import RegexpTokenizer
 from nltk.corpus import stopwords
 from nltk.stem.snowball import SnowballStemmer
+from nltk.tokenize import sent_tokenize
 
 
 class TokenizerStemmer:
@@ -23,10 +24,13 @@ class Tokenizer:
     def __init__(self):
         self.tokenizer = RegexpTokenizer(r'\w+')
 
-    def tokenize(self, text):
+    def span_tokenize(self, text):
         for start, end in self.tokenizer.span_tokenize(text):
             word = text[start:end].lower()
             yield start, end, word
+
+    def tokenize(self, text):
+        return self.tokenizer.tokenize(text)
 
 
 def process_dir(root_path, encoding='utf-8'):
