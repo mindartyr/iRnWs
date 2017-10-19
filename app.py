@@ -22,6 +22,7 @@ def search():
         abort(400)
 
     query = str(json['query']).strip()
+    found_docs = text_index.process_query(query)
 
     return jsonify(
         results=search_backend.search(query)
