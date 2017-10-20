@@ -1,7 +1,6 @@
 import os
-
 from collections import defaultdict
-
+import pickle
 from search_backend.tokenizer_stemmer import TokenizerStemmer
 
 ROOT_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../data/python-3.6.3-docs-text')
@@ -17,6 +16,15 @@ class TextIndex:
         self.cache_prev = defaultdict(dict)
         self.tokenizer_stemmer = TokenizerStemmer()
 
+    @staticmethod
+    def load_index(path='text_index.pkl'):
+        with open(path, 'rb') as g:
+            return pickle.load(g)
+
+    def save_index(self, path='text_index.pkl'):
+        with open(path, 'wb') as g:
+            pickle.dump(self, g)
+
     def build_index(self, root_path):
         curr_file_id = 0
         for dirName, subdirList, fileList in os.walk(root_path):
@@ -29,6 +37,7 @@ class TextIndex:
                         text = f.read()
                         self.original_text[curr_file_id] = text
                         self.process_text(text, curr_file_id)
+        self.save_index()
         return self
 
     def process_text(self, text, file_id):
@@ -46,13 +55,15 @@ class TextIndex:
             terms.append(stemmed_word)
 
         for document_id in self.get_docs_for_and_query(terms):
-            found = self.next_phrase(terms, document_id, 0)
+            found = self.next_phrase(terms, document_id, 0, len(query))
             if found:
-                matched_docs.append((self.files_ids[document_id],
-                                     self.original_text[document_id][found[0]:found[1]+20]))
+                matched_docs.append({
+                    'title': self.files_ids[document_id],
+                    'snippet': self.original_text[document_id][found[0]:found[1]+20],
+                    'href': 'http://www.{0}.com'.format(document_id)
+                })
 
-        print(matched_docs)
-        return dict(docs=matched_docs)
+        return matched_docs
 
     def get_docs_for_and_query(self, terms):
         if len(terms) == 0:
@@ -110,6 +121,7 @@ class TextIndex:
         curr_cache = self.cache_prev[term][file_id] if file_id in self.cache_prev[term] else 0
         if len(occurrence_list) == 0 or occurrence_list[0] >= current:
             return None
+
         if occurrence_list[-1] < current:
             curr_cache = len(occurrence_list)-1
             return occurrence_list[curr_cache]
@@ -119,7 +131,7 @@ class TextIndex:
             high = len(occurrence_list)-1
         jump = 1
         low = high - jump
-        while low > 0 and occurrence_list[high] >= current:
+        while low > 0 and occurrence_list[low] >= current:
             high = low
             jump *= 2
             low = high - jump
@@ -128,21 +140,28 @@ class TextIndex:
         curr_cache = self.binary_search(term, file_id, low, high, current, False)
         return occurrence_list[curr_cache]
 
-    def next_phrase(self, terms, file_id, position):
+    def next_phrase(self, terms, file_id, position, precision):
         cur_pos = position
         for term in terms:
             cur_pos = self.next(term, file_id, cur_pos)
             if not cur_pos:
                 return None
         back_pos = cur_pos
-        print(cur_pos)
-        print()
+
         for term in terms[:-1:][::-1]:
             back_pos = self.prev(term, file_id, back_pos)
-            print(term, back_pos)
-        if cur_pos - back_pos <= 30:
+        if cur_pos - back_pos <= precision + precision / 2:
             return back_pos, cur_pos
         else:
-            return self.next_phrase(terms, file_id, back_pos+1)
+            return self.next_phrase(terms, file_id, back_pos+1, precision)
 
-
+if __name__ == '__main__':
+    if 0:
+        f = open('text_index.pkl', 'wb')
+        text_index = TextIndex().build_index('../data/')
+        pickle.dump(text_index, f)
+    else:
+        f = open('text_index.pkl', 'rb')
+        text_index = pickle.load(f)
+    text_index.process_query('python language')
+    f.close()

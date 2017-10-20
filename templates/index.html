@@ -28,10 +28,11 @@
                     $('div.result-area').html('');
                     var $list = $('<ol></ol>').addClass('list-group');
 
-                    $('div.result-area.p').append($list);
-                    $('div.suggested-query').text("Maybe you meant: " + response.suggested_query)
+                    $('div.result-area').append($list);
+                    $('div.suggested-query').text("Maybe you meant: " + response.suggested_query);
                     console.log(response);
                     $.each(response.results, function(i, item){
+                        console.log(item);
                         $list.append(
                             $('<li></li>')
                                 .addClass('card-body list-group-item')

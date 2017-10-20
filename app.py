@@ -7,8 +7,12 @@ from search_backend.text_index import TextIndex
 app = Flask(__name__)
 
 DATA_PATH = 'data/python-3.6.3-docs-text'
+INIT = 0
 
-# text_index = TextIndex().build_index(DATA_PATH)
+if INIT:
+    text_index = TextIndex().build_index(DATA_PATH)
+else:
+    text_index = TextIndex.load_index()
 language_model_en = NGramModel(3, 'en').process_dir(DATA_PATH)
 
 
@@ -25,11 +29,11 @@ def search():
 
     query = str(json['query']).strip()
     suggested_query = language_model_en.spell_check(query)
-    # found_docs = text_index.process_query(query)
-
+    found_docs = text_index.process_query(query)
+    print(found_docs)
+    print(search_backend.search(query))
     return jsonify(
-        results=search_backend.search(query),
-        # found_docs=found_docs,
+        results=found_docs,
         suggested_query=suggested_query
     )
 
