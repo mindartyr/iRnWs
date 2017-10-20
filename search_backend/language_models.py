@@ -4,6 +4,8 @@ from search_backend.tokenizer_stemmer import TokenizerStemmer, process_dir, Toke
 from nltk import ngrams
 from nltk.tokenize import sent_tokenize
 
+LETTERS= 'abcdefghijklmnopqrstuvwxyz'
+
 
 class NGramModel:
     def __init__(self, n, language):
@@ -45,6 +47,16 @@ class NGramModel:
                     probability = 0
         return probability
 
+    def get_probability_word(self, word):
+        probability = 1.0
+        n_grams = self.get_n_grams(word)
+        for n_gram in n_grams:
+            if n_gram in self.probabilities:
+                probability *= self.probabilities[n_gram]
+            else:
+                probability = 0
+        return probability
+
     @staticmethod
     def get_language_of_a_query(query, list_of_models):
         prob = []
@@ -52,6 +64,46 @@ class NGramModel:
             prob.append((model.get_probability_query(query), model.language))
 
         return max(prob, key=lambda x: x[0])[1]
+
+    @staticmethod
+    def _word_one_edit(word):
+        """All edits that are one edit away from `word`."""
+        splits = [(word[:i], word[i:]) for i in range(len(word) + 1)]
+        # deletes = [L + R[1:] for L, R in splits if R]
+        transposes = [L + R[1] + R[0] + R[2:] for L, R in splits if len(R) > 1]
+        # replaces = [L + c + R[1:] for L, R in splits if R for c in LETTERS]
+        # inserts = [L + c + R for L, R in splits for c in LETTERS]
+        return set(transposes)  # + replaces + inserts + deletes)
+
+    @staticmethod
+    def _word_two_edits(word):
+        """All edits that are two edits away from `word`."""
+        return (e2 for e1 in NGramModel._word_one_edit(word) for e2 in NGramModel._word_one_edit(e1))
+
+    def spell_check(self, query):
+
+        suggested_query = []
+
+        for word in self.tokenizer_stemmer.tokenize(query):
+            prob = self.get_probability_word(word)
+            max_probability = prob
+            max_probability_original = max_probability
+            corresponding_word = word
+
+            for edited_word in self._word_one_edit(word):
+                prob = self.get_probability_word(edited_word)
+                if prob > max_probability:
+                    max_probability = prob
+                    corresponding_word = edited_word
+
+            # for edited_word in self._word_two_edits(word):
+            #     prob = self.get_probability_word(edited_word)
+            #     if prob > max_probability:
+            #         max_probability = prob
+            #         corresponding_word = edited_word
+
+            suggested_query.append(corresponding_word if max_probability > 1.5 * max_probability_original else word)
+        return ' '.join(suggested_query)
 
 
 class NGramWordsModel:
@@ -105,5 +157,4 @@ class NGramWordsModel:
         prob = []
         for model in list_of_models:
             prob.append((model.get_probability_query(query), model.language))
-        print(prob)
         return max(prob, key=lambda x: x[0])[1]

@@ -1,13 +1,15 @@
 import os
 from flask import Flask, render_template, jsonify, abort, request
 import search_backend
+from search_backend.language_models import NGramModel
 from search_backend.text_index import TextIndex
 
 app = Flask(__name__)
 
 DATA_PATH = 'data/python-3.6.3-docs-text'
 
-text_index = TextIndex().build_index(DATA_PATH)
+# text_index = TextIndex().build_index(DATA_PATH)
+language_model_en = NGramModel(3, 'en').process_dir(DATA_PATH)
 
 
 @app.route("/")
@@ -22,10 +24,13 @@ def search():
         abort(400)
 
     query = str(json['query']).strip()
-    found_docs = text_index.process_query(query)
+    suggested_query = language_model_en.spell_check(query)
+    # found_docs = text_index.process_query(query)
 
     return jsonify(
-        results=search_backend.search(query)
+        results=search_backend.search(query),
+        # found_docs=found_docs,
+        suggested_query=suggested_query
     )
 
 

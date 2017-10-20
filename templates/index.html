@@ -27,7 +27,9 @@
                 }).done(function (response) {
                     $('div.result-area').html('');
                     var $list = $('<ol></ol>').addClass('list-group');
-                    $('div.result-area').append($list);
+
+                    $('div.result-area.p').append($list);
+                    $('div.suggested-query').text("Maybe you meant: " + response.suggested_query)
                     console.log(response);
                     $.each(response.results, function(i, item){
                         $list.append(
@@ -73,7 +75,10 @@
     </nav>
     </header>
 
-    <div class="card"><div class="card-body result-area">You will see search results here.</div></div>
+    <div class="card">
+        <div class="card-body suggested-query"></div>
+        <div class="card-body result-area">You will see search results here.</div>
+    </div>
 
     <footer class="footer">
         <hr>
