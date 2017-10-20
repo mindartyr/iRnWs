@@ -1,5 +1,7 @@
 import os
 from flask import Flask, render_template, jsonify, abort, request
+from flask import url_for
+
 import search_backend
 from search_backend.language_models import NGramModel
 from search_backend.text_index import TextIndex
@@ -30,8 +32,7 @@ def search():
     query = str(json['query']).strip()
     suggested_query = language_model_en.spell_check(query)
     found_docs = text_index.process_query(query)
-    print(found_docs)
-    print(search_backend.search(query))
+
     return jsonify(
         results=found_docs,
         suggested_query=suggested_query
@@ -39,4 +40,5 @@ def search():
 
 
 if __name__ == "__main__":
+
     app.run()
