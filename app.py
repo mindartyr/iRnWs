@@ -31,7 +31,13 @@ def search():
 
     query = str(json['query']).strip()
     suggested_query = language_model_en.spell_check(query)
-    found_docs = text_index.process_query(query)
+
+    if query.startswith(("'", '"')) and query.endswith(("'", '"')):
+        found_docs = text_index.process_query(query)
+    elif ' AND ' or ' OR ' in query:
+        found_docs = text_index.process_conditional_query(query)
+    else:
+        found_docs = text_index.process_query(query)
 
     return jsonify(
         results=found_docs,

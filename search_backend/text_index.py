@@ -65,6 +65,13 @@ class TextIndex:
 
         return matched_docs
 
+    def process_conditional_query(self, query):
+        or_queries = query.split(' OR ')
+        results = []
+        for or_query in or_queries:
+            results += 1
+        raise NotImplementedError()
+
     def get_docs_for_and_query(self, terms):
         if len(terms) == 0:
             return set()
@@ -154,6 +161,7 @@ class TextIndex:
             return back_pos, cur_pos
         else:
             return self.next_phrase(terms, file_id, back_pos+1, precision)
+
 
 if __name__ == '__main__':
     if 0:
