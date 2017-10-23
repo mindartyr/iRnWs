@@ -1,12 +1,12 @@
 from collections import defaultdict
 
-from search_backend.tokenizer_stemmer import process_dir, Tokenizer
+from search_backend.tokenizer_stemmer import process_dir, Tokenizer, TokenizerStemmer
 
 
 class TextRank:
 
     def __init__(self):
-        self.tokenizer = Tokenizer()
+        self.tokenizer = TokenizerStemmer()
         self.betta = 0.15
         self.stop_eps = 0.1
 
