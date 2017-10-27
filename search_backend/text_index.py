@@ -10,7 +10,9 @@ ROOT_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../data/p
 
 
 class TextIndex:
+    """Index for the text data
 
+    """
     def __init__(self):
         self.word_occurrences = defaultdict(dict)
         self.word_count = defaultdict(dict)
@@ -47,7 +49,7 @@ class TextIndex:
 
     def process_text(self, text, file_id):
         """Build index for the file"""
-        for start, end, stemmed_word in self.tokenizer_stemmer.tokenize(text):
+        for start, end, stemmed_word in self.tokenizer_stemmer.span_tokenize(text):
             if file_id not in self.word_occurrences[stemmed_word]:
                 self.word_occurrences[stemmed_word][file_id] = [start]
                 self.word_count[file_id][stemmed_word] = 1
@@ -61,7 +63,7 @@ class TextIndex:
         matched_ids = []
         matched_in_text = dict()
 
-        for _, _, stemmed_word in self.tokenizer_stemmer.tokenize(query):
+        for _, _, stemmed_word in self.tokenizer_stemmer.span_tokenize(query):
             terms.append(stemmed_word)
 
         for document_id in self.get_docs_for_and_query(terms):

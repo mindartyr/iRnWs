@@ -12,12 +12,16 @@ class TokenizerStemmer:
         self.eng_stemmer = SnowballStemmer("english")
         self.tokenizer = RegexpTokenizer(r'\w+')
 
-    def tokenize(self, text):
+    def span_tokenize(self, text):
         for start, end in self.tokenizer.span_tokenize(text):
             word = text[start:end].lower()
             stemmed_word = self.eng_stemmer.stem(word)
             if word not in self.eng_stop_words:
                 yield start, end, stemmed_word
+
+    def tokenize(self, text):
+        text = text.lower()
+        return self.tokenizer.tokenize(text)
 
 
 class Tokenizer:
@@ -30,6 +34,7 @@ class Tokenizer:
             yield start, end, word
 
     def tokenize(self, text):
+        text = text.lower()
         return self.tokenizer.tokenize(text)
 
 

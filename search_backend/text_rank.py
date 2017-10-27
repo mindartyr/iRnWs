@@ -85,7 +85,7 @@ class TextRank:
 
     def get_bag_of_words(self, text):
         word_count = defaultdict(int)
-        for word in self.tokenizer.tokenize(text):
+        for word in self.tokenizer.span_tokenize(text):
             word_count[word] += 1
         return word_count
 
