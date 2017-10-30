@@ -3,7 +3,7 @@ from collections import defaultdict
 import pickle
 import math
 import bz2
-import xml.etree.ElementTree as ET
+import numpy as np
 from lxml import etree
 import re
 from search_backend.tokenizer_stemmer import TokenizerStemmer
@@ -14,8 +14,8 @@ class WikiPageIndex:
         self.file_id = file_id
         self.xml = xml
         self.body_index = BodyIndex()
-        self.anchor_index = TextIndex()
-        self.title_index = TextIndex()
+        self.anchor_index = AnchorIndex()
+        self.title_index = TitleIndex()
         self.links = None
 
     def build_index(self):
@@ -34,8 +34,69 @@ class WikiPageIndex:
     def get_title(self):
         return self.xml.xpath("//title")[0].text
 
-    def get_features(self):
+    @staticmethod
+    def get_features(query_terms, docs):
+        all_features = []
+
+        for doc_id in docs:
+            doc_features = list()
+            covered_term_number = WikiPageIndex.get_covered_term_number(doc_id, query_terms)
+            stream_length = WikiPageIndex.get_stream_length(doc_id)
+            idf = WikiPageIndex.get_idf(docs, query_terms)
+            tf = WikiPageIndex.get_tf(doc_id, query_terms)
+            tf_idf_features = WikiPageIndex.get_tf_idf_features(doc_id)
+            doc_features += covered_term_number   # 1 2 3
+            doc_features += [feature / len(query_terms) for feature in covered_term_number]  # 6 7 8
+            doc_features += stream_length  # 11 12 13
+            doc_features += idf  # 16 17 18
+            doc_features += [sum(feature) for feature in tf]  # 21 22 23
+            doc_features += [min(feature) for feature in tf]  # 26 27 28
+            doc_features += [max(feature) for feature in tf]  # 31 32 33
+            doc_features += [np.mean(feature) for feature in tf]  # 36 37 38
+            doc_features += [np.var(feature) for feature in tf]  # 41 42 43
+            doc_features += [sum(feature) / length for feature, length in zip(tf, stream_length)]  # 46 47 48
+            doc_features += [min(feature) / length for feature, length in zip(tf, stream_length)]  # 51 52 53
+            doc_features += [max(feature) / length for feature, length in zip(tf, stream_length)]  # 56 57 58
+            doc_features += [np.mean(feature) / length for feature, length in zip(tf, stream_length)]  # 61 62 63
+            doc_features += [np.var(feature) / length for feature, length in zip(tf, stream_length)]  # 66 67 68
+            doc_features += tf_idf_features
+
         raise NotImplementedError
+
+    @staticmethod
+    def get_covered_term_number(doc_id, query_terms):
+        return [BodyIndex.get_query_term_intersection(doc_id, query_terms),
+                AnchorIndex.get_query_term_intersection(doc_id, query_terms),
+                TitleIndex.get_query_term_intersection(doc_id, query_terms)]
+
+    @staticmethod
+    def get_stream_length(doc_id):
+        return [BodyIndex.get_stream_length(doc_id),
+                AnchorIndex.get_stream_length(doc_id),
+                TitleIndex.get_stream_length(doc_id)]
+
+    @staticmethod
+    def get_idf(docs, terms):
+        return [BodyIndex.get_idf(docs, terms),
+                AnchorIndex.get_idf(docs, terms),
+                TitleIndex.get_idf(docs, terms)]
+
+    @staticmethod
+    def get_tf(doc_id, terms):
+        return [BodyIndex.get_tf(doc_id, terms),
+                AnchorIndex.get_tf(doc_id, terms),
+                TitleIndex.get_tf(doc_id, terms)]
+
+    @staticmethod
+    def get_tf_idf_features(doc_id):
+        output_features = []
+        body_features = BodyIndex.get_tf_idf_features(doc_id)
+        anchor_features = AnchorIndex.get_tf_idf_features(doc_id)
+        title_features = TitleIndex.get_tf_idf_features(doc_id)
+
+        for f1, f2, f3 in zip(body_features, anchor_features, title_features):
+            output_features += [f1, f2, f3]
+        return output_features
 
 
 class TextIndex:
@@ -44,13 +105,16 @@ class TextIndex:
     word_count = defaultdict(dict)
     cache_next = defaultdict(dict)
     cache_prev = defaultdict(dict)
-
-    def __init__(self):
-        self.features = [0] * 136
+    original_text = defaultdict(str)
+    # TODO: 1) implement tf-idf as a numpy array
+    # TODO: 2) make mapping for words str<->int
+    idf = defaultdict(float)
+    tf = defaultdict(dict)
 
     @classmethod
     def process_text(cls, text, file_id):
         """Build index for the file"""
+        cls.original_text[file_id] = text
         for start, end, stemmed_word in cls.tokenizer_stemmer.span_tokenize(text):
             if file_id not in cls.word_occurrences[stemmed_word]:
                 cls.word_occurrences[stemmed_word][file_id] = [start]
@@ -58,6 +122,7 @@ class TextIndex:
             else:
                 cls.word_occurrences[stemmed_word][file_id].append(start)
                 cls.word_count[file_id][stemmed_word] += 1
+        cls.calc_idf()
 
     @classmethod
     def binary_search(cls, term, file_id, low, high, current, mode=True):
@@ -188,6 +253,18 @@ class TextIndex:
         return sorted(documents_rank, key=lambda x: x[0])
 
     @classmethod
+    def calc_idf(cls):
+        for doc_id in cls.word_count:
+            for word in cls.word_count[doc_id]:
+                if cls.word_count[doc_id][word] > 0:
+                    cls.idf[word] += 1
+
+        doc_amount = len(cls.word_count)
+
+        for word in cls.idf:
+            cls.idf[word] = math.log(doc_amount / (1 + cls.idf[word]))
+
+    @classmethod
     def get_docs_query_intersection(cls, terms):
         """Get all documents id which consist all the query terms"""
         if len(terms) == 0:
@@ -198,12 +275,61 @@ class TextIndex:
             docs_ids.intersection_update(cls.word_occurrences[term].keys())
         return docs_ids
 
+    @classmethod
+    def get_query_term_intersection(cls, doc_id, terms):
+        count = 0
+        for term in terms:
+            if len(cls.word_occurrences[term][doc_id]) > 0:
+                count += 1
+        return count
+
+    @classmethod
+    def get_stream_length(cls, doc_id):
+        return len(cls.original_text[doc_id])
+
+    @classmethod
+    def get_idf(cls, docs, terms):
+        # maybe there should be just sum of idf of terms
+        idf = 0
+        for doc_id in docs:
+            for word in terms:
+                if cls.word_count[doc_id][word] > 0:
+                    idf += 1
+
+        doc_amount = len(docs)
+
+        idf = math.log(doc_amount / (1 + idf))
+        return idf
+
+    @classmethod
+    def get_tf(cls, doc_id, terms):
+        tf = []
+        for term in terms:
+            tf.append(cls.word_count[doc_id][term])
+        return tf
+
+    @classmethod
+    def get_tf_idf_features(cls, doc_id):
+        # TODO this tf-idf is without zeros
+        tf_idf = []
+        for word in cls.word_count[doc_id]:
+            tf_idf.append(cls.word_count[doc_id][word] * cls.idf[word])
+
+        return [sum(tf_idf),
+                min(tf_idf),
+                max(tf_idf),
+                np.mean(tf_idf),
+                np.var(tf_idf)]
+
 
 class BodyIndex(TextIndex):
     word_occurrences = defaultdict(dict)
     word_count = defaultdict(dict)
     cache_next = defaultdict(dict)
     cache_prev = defaultdict(dict)
+    original_text = defaultdict(str)
+    idf = defaultdict(float)
+    tf = defaultdict(dict)
 
 
 class TitleIndex(TextIndex):
@@ -211,6 +337,9 @@ class TitleIndex(TextIndex):
     word_count = defaultdict(dict)
     cache_next = defaultdict(dict)
     cache_prev = defaultdict(dict)
+    original_text = defaultdict(str)
+    idf = defaultdict(float)
+    tf = defaultdict(dict)
 
 
 class AnchorIndex(TextIndex):
@@ -218,6 +347,9 @@ class AnchorIndex(TextIndex):
     word_count = defaultdict(dict)
     cache_next = defaultdict(dict)
     cache_prev = defaultdict(dict)
+    original_text = defaultdict(str)
+    idf = defaultdict(float)
+    tf = defaultdict(dict)
 
 
 class WikiIndex:
@@ -225,6 +357,23 @@ class WikiIndex:
         self.pages = dict()
         self.last_file_id = 0
         self.scoring_model = ScoringModel()
+
+    def __getstate__(self):
+        """Method for a pickle library to save class variables of TextIndex"""
+        output = self.__dict__
+        output['body_index'] = BodyIndex.__dict__
+        output['anchor_index'] = AnchorIndex.__dict__
+        output['title_index'] = TitleIndex.__dict__
+        return output
+
+    def __setstate__(self, d):
+        """Method for a pickle library to load class variables of TextIndex"""
+        BodyIndex.__dict__ = d['body_index']
+        AnchorIndex.__dict__ = d['anchor_index']
+        TitleIndex.__dict__ = d['title_index']
+        for k in ['body_index', 'anchor_index', 'title_index']:
+            d.pop(k, None)
+        self.__dict__ = d
 
     @staticmethod
     def load_index(path='text_index.pkl'):
@@ -253,6 +402,7 @@ class WikiIndex:
 
     @staticmethod
     def read_wiki_file(file_path):
+        """Read wiki documents from bz2 wiki dump"""
         with bz2.open(file_path) as f:
             page = ''
             for line in f:
@@ -274,7 +424,7 @@ class WikiIndex:
 
         found_docs = BodyIndex.get_docs_query_intersection(query_terms)
 
-        docs_features = WikiPageIndex.get_features(found_docs)
+        docs_features = WikiPageIndex.get_features(query_terms, found_docs)
 
         relevant_docs = self.scoring_model.predict(docs_features)
 
@@ -294,4 +444,10 @@ class ScoringModel:
 
 
 if __name__ == '__main__':
-    wiki_files = WikiIndex().build_index_file('../../enwiki-20171020-pages-articles1.xml-p10p30302.bz2')
+    if 1:
+        wiki_files = WikiIndex().build_index_file('../../enwiki-20171020-pages-articles1.xml-p10p30302.bz2')
+        wiki_files.save_index('wiki_index.pkl')
+        print(BodyIndex.word_occurrences)
+    else:
+        wiki_files = WikiIndex.load_index('wiki_index.pkl')
+        print(BodyIndex.word_occurrences)
