@@ -6,7 +6,19 @@ import bz2
 import numpy as np
 from lxml import etree
 import re
+
+from search_backend.sql_dict import WordCount, WordOccurrences, SimpleDict
 from search_backend.tokenizer_stemmer import TokenizerStemmer
+
+
+def get_features_mapping(amount):
+    output = []
+    i = 1
+    while len(output) < amount:
+        if i % 5 != 0 and i % 5 != 4:
+            output.append(i)
+        i += 1
+    return output
 
 
 class WikiPageIndex:
@@ -19,14 +31,15 @@ class WikiPageIndex:
         self.links = None
 
     def build_index(self):
-        self.links = self.xml.xpath("//text()")
+        self.links = self.get_links(self.xml.xpath("string()"))
         self.body_index.process_text(self.get_text(), self.file_id)
-        self.title_index.process_text(self.get_text(), self.file_id)
-        self.anchor_index.process_text(self.get_links_str(), self.file_id)
+        self.title_index.process_text(self.get_title(), self.file_id)
+        self.anchor_index.process_text(' '.join(self.links), self.file_id)
         return self
 
-    def get_links_str(self):
-        return re.findall(r"\[\[(.*?)\]\]", ' '.join(self.links))
+    @staticmethod
+    def get_links(x):
+        return re.findall(r"\[\[(.*?)\]\]", x)
 
     def get_text(self):
         return self.xml.xpath("//text")[0].text
@@ -60,8 +73,12 @@ class WikiPageIndex:
             doc_features += [np.mean(feature) / length for feature, length in zip(tf, stream_length)]  # 61 62 63
             doc_features += [np.var(feature) / length for feature, length in zip(tf, stream_length)]  # 66 67 68
             doc_features += tf_idf_features
+            all_features.append(doc_features)
 
-        raise NotImplementedError
+        print(['{0}:{1}'.format(number, feature)
+               for feature, number in
+               zip(all_features[0], get_features_mapping(len(all_features[0])))])
+        return all_features
 
     @staticmethod
     def get_covered_term_number(doc_id, query_terms):
@@ -100,33 +117,28 @@ class WikiPageIndex:
 
 
 class TextIndex:
+    stream_length = SimpleDict('stream_length')
     tokenizer_stemmer = TokenizerStemmer()
-    word_occurrences = defaultdict(dict)
-    word_count = defaultdict(dict)
+    word_occurrences = WordOccurrences('text')
+    word_count = WordCount('text')
     cache_next = defaultdict(dict)
     cache_prev = defaultdict(dict)
-    original_text = defaultdict(str)
     # TODO: 1) implement tf-idf as a numpy array
     # TODO: 2) make mapping for words str<->int
-    idf = defaultdict(float)
+    idf = SimpleDict('idf')
     tf = defaultdict(dict)
 
     @classmethod
     def process_text(cls, text, file_id):
         """Build index for the file"""
-        cls.original_text[file_id] = text
+        cls.stream_length.set(file_id, len(text))
         for start, end, stemmed_word in cls.tokenizer_stemmer.span_tokenize(text):
-            if file_id not in cls.word_occurrences[stemmed_word]:
-                cls.word_occurrences[stemmed_word][file_id] = [start]
-                cls.word_count[file_id][stemmed_word] = 1
-            else:
-                cls.word_occurrences[stemmed_word][file_id].append(start)
-                cls.word_count[file_id][stemmed_word] += 1
-        cls.calc_idf()
+            cls.word_occurrences.append(file_id, stemmed_word, start)
+            cls.word_count.increment(file_id, stemmed_word, 1)
 
     @classmethod
     def binary_search(cls, term, file_id, low, high, current, mode=True):
-        occurrence_list = cls.word_occurrences[term][file_id]
+        occurrence_list = cls.word_occurrences.select_positions(file_id, term)
 
         while high - low > 1:
             middle = int((low + high) / 2)
@@ -145,7 +157,7 @@ class TextIndex:
     @classmethod
     def next(cls, term, file_id, current):
         """Get a next occurrence of a term in the document after the current position"""
-        occurrence_list = cls.word_occurrences[term][file_id]
+        occurrence_list = cls.word_occurrences.select_positions(file_id, term)
         curr_cache = cls.cache_next[term][file_id] if file_id in cls.cache_next[term] else 0
 
         if len(occurrence_list) == 0 or occurrence_list[-1] <= current:
@@ -171,7 +183,7 @@ class TextIndex:
     @classmethod
     def prev(cls, term, file_id, current):
         """Get a previous occurrence of a term in the document before the current position"""
-        occurrence_list = cls.word_occurrences[term][file_id]
+        occurrence_list = cls.word_occurrences.select_positions(file_id, term)
         curr_cache = cls.cache_prev[term][file_id] if file_id in cls.cache_prev[term] else 0
         if len(occurrence_list) == 0 or occurrence_list[0] >= current:
             return None
@@ -224,16 +236,17 @@ class TextIndex:
 
         words_index = set()
         for document_id in documents_id:
-            words_index = words_index.union(set(cls.word_count[document_id].keys()))
+            words_index = words_index.union(set(cls.word_count.select_words(document_id)))
 
         for word in words_index:
-            idf[word] = len(set(cls.word_occurrences[word].keys()).intersection(set(documents_id)))
+            idf[word] = len(set(cls.word_occurrences.select_documents(word)).intersection(set(documents_id)))
             query_tf_idf_vector.append(query_tf[word] * math.log(len(documents_id) / (1 + idf[word])))
             query_vector_len += query_tf_idf_vector[-1] ** 2
 
         for document_id in documents_id:
             for word in words_index:
-                tf = cls.word_count[document_id][word] if word in cls.word_count[document_id] else 0
+                tf = cls.word_count.select_count(document_id, word) if word in cls.word_count.select_words(document_id)\
+                    else 0
                 tf_idf_vectors[document_id] \
                     .append(tf * math.log(len(documents_id) / (1 + idf[word])))
 
@@ -254,15 +267,15 @@ class TextIndex:
 
     @classmethod
     def calc_idf(cls):
-        for doc_id in cls.word_count:
-            for word in cls.word_count[doc_id]:
-                if cls.word_count[doc_id][word] > 0:
-                    cls.idf[word] += 1
+        docs = cls.word_count.select()
+        for doc in docs:
+            if doc['count'] > 0:
+                cls.idf.increment(doc['word'], 1)
 
-        doc_amount = len(cls.word_count)
+        doc_amount = cls.word_count.doc_amount()
 
-        for word in cls.idf:
-            cls.idf[word] = math.log(doc_amount / (1 + cls.idf[word]))
+        for doc in cls.idf.select():
+            cls.idf.set(doc['key'], math.log(doc_amount / (1 + doc['value'])))
 
     @classmethod
     def get_docs_query_intersection(cls, terms):
@@ -270,22 +283,24 @@ class TextIndex:
         if len(terms) == 0:
             return set()
 
-        docs_ids = set(cls.word_occurrences[terms[0]].keys())
+        docs_ids = set(cls.word_occurrences.select_documents(terms[0]))
+
         for term in terms[1:]:
-            docs_ids.intersection_update(cls.word_occurrences[term].keys())
+            docs_ids.intersection_update(cls.word_occurrences.select_documents(term))
         return docs_ids
 
     @classmethod
     def get_query_term_intersection(cls, doc_id, terms):
         count = 0
         for term in terms:
-            if len(cls.word_occurrences[term][doc_id]) > 0:
+            positions_len = len(list(cls.word_occurrences.select_positions(doc_id, term)))
+            if positions_len > 0:
                 count += 1
         return count
 
     @classmethod
     def get_stream_length(cls, doc_id):
-        return len(cls.original_text[doc_id])
+        return cls.stream_length.select_value(doc_id)
 
     @classmethod
     def get_idf(cls, docs, terms):
@@ -293,7 +308,8 @@ class TextIndex:
         idf = 0
         for doc_id in docs:
             for word in terms:
-                if cls.word_count[doc_id][word] > 0:
+                count = cls.word_count.select_count(document=doc_id, word=word)
+                if count and count > 0:
                     idf += 1
 
         doc_amount = len(docs)
@@ -305,50 +321,58 @@ class TextIndex:
     def get_tf(cls, doc_id, terms):
         tf = []
         for term in terms:
-            tf.append(cls.word_count[doc_id][term])
+            count = cls.word_count.select_count(document=doc_id, word=term)
+            tf.append(count if count else 0)
         return tf
 
     @classmethod
     def get_tf_idf_features(cls, doc_id):
         # TODO this tf-idf is without zeros
         tf_idf = []
-        for word in cls.word_count[doc_id]:
-            tf_idf.append(cls.word_count[doc_id][word] * cls.idf[word])
-
+        for word in cls.word_count.select_words(doc_id):
+            tf_idf.append(cls.word_count.select_count(doc_id, word) * cls.idf.select_value(word))
         return [sum(tf_idf),
                 min(tf_idf),
                 max(tf_idf),
                 np.mean(tf_idf),
                 np.var(tf_idf)]
 
+    @classmethod
+    def execute_bulk(cls):
+        cls.word_occurrences.execute_bulk()
+        cls.word_count.execute_bulk()
+        cls.stream_length.execute_bulk()
+        cls.calc_idf()
+        cls.idf.execute_bulk()
+
 
 class BodyIndex(TextIndex):
-    word_occurrences = defaultdict(dict)
-    word_count = defaultdict(dict)
+    stream_length = SimpleDict('stream_length_body')
+    word_occurrences = WordOccurrences('body')
+    word_count = WordCount('body')
     cache_next = defaultdict(dict)
     cache_prev = defaultdict(dict)
-    original_text = defaultdict(str)
-    idf = defaultdict(float)
+    idf = SimpleDict('idf_body')
     tf = defaultdict(dict)
 
 
 class TitleIndex(TextIndex):
-    word_occurrences = defaultdict(dict)
-    word_count = defaultdict(dict)
+    stream_length = SimpleDict('stream_length_title')
+    word_occurrences = WordOccurrences('title')
+    word_count = WordCount('title')
     cache_next = defaultdict(dict)
     cache_prev = defaultdict(dict)
-    original_text = defaultdict(str)
-    idf = defaultdict(float)
+    idf = SimpleDict('idf_title')
     tf = defaultdict(dict)
 
 
 class AnchorIndex(TextIndex):
-    word_occurrences = defaultdict(dict)
-    word_count = defaultdict(dict)
+    stream_length = SimpleDict('stream_length_anchor')
+    word_occurrences = WordOccurrences('anchor')
+    word_count = WordCount('anchor')
     cache_next = defaultdict(dict)
     cache_prev = defaultdict(dict)
-    original_text = defaultdict(str)
-    idf = defaultdict(float)
+    idf = SimpleDict('idf_anchor')
     tf = defaultdict(dict)
 
 
@@ -357,32 +381,6 @@ class WikiIndex:
         self.pages = dict()
         self.last_file_id = 0
         self.scoring_model = ScoringModel()
-
-    def __getstate__(self):
-        """Method for a pickle library to save class variables of TextIndex"""
-        output = self.__dict__
-        output['body_index'] = BodyIndex.__dict__
-        output['anchor_index'] = AnchorIndex.__dict__
-        output['title_index'] = TitleIndex.__dict__
-        return output
-
-    def __setstate__(self, d):
-        """Method for a pickle library to load class variables of TextIndex"""
-        BodyIndex.__dict__ = d['body_index']
-        AnchorIndex.__dict__ = d['anchor_index']
-        TitleIndex.__dict__ = d['title_index']
-        for k in ['body_index', 'anchor_index', 'title_index']:
-            d.pop(k, None)
-        self.__dict__ = d
-
-    @staticmethod
-    def load_index(path='text_index.pkl'):
-        with open(path, 'rb') as g:
-            return pickle.load(g)
-
-    def save_index(self, path='text_index.pkl'):
-        with open(path, 'wb') as g:
-            pickle.dump(self, g)
 
     def build_index_root(self, root_path):
         """Build index for all files in the directory"""
@@ -395,9 +393,16 @@ class WikiIndex:
     def build_index_file(self, file_path):
         """Build index for one file"""
         for xml in self.read_wiki_file(file_path):
+            print("doc id: ", self.last_file_id)
             self.pages[self.last_file_id] = WikiPageIndex(xml=xml, file_id=self.last_file_id)
+            self.pages[self.last_file_id].build_index()
             self.last_file_id += 1
-        self.save_index()
+            if self.last_file_id > 100:
+                break
+
+        BodyIndex.execute_bulk()
+        TitleIndex.execute_bulk()
+        AnchorIndex.execute_bulk()
         return self
 
     @staticmethod
@@ -423,7 +428,6 @@ class WikiIndex:
         query_terms = TextIndex.tokenizer_stemmer.tokenize(query)
 
         found_docs = BodyIndex.get_docs_query_intersection(query_terms)
-
         docs_features = WikiPageIndex.get_features(query_terms, found_docs)
 
         relevant_docs = self.scoring_model.predict(docs_features)
@@ -446,8 +450,8 @@ class ScoringModel:
 if __name__ == '__main__':
     if 1:
         wiki_files = WikiIndex().build_index_file('../../enwiki-20171020-pages-articles1.xml-p10p30302.bz2')
-        wiki_files.save_index('wiki_index.pkl')
-        print(BodyIndex.word_occurrences)
+        # wiki_files.save_index('wiki_index.pkl')
+        wiki_files.search_query('war world')
     else:
         wiki_files = WikiIndex.load_index('wiki_index.pkl')
         print(BodyIndex.word_occurrences)
