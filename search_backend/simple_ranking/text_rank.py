@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from search_backend.tokenizer_stemmer import process_dir, Tokenizer, TokenizerStemmer
+from search_backend.text_processing.tokenizer_stemmer import process_dir, TokenizerStemmer
 
 
 class TextRank:

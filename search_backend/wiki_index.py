@@ -1,14 +1,17 @@
-import os
-from collections import defaultdict
-import pickle
-import math
 import bz2
+import math
+import os
+import re
+from collections import defaultdict
+from tqdm import tqdm
 import numpy as np
 from lxml import etree
-import re
 
-from search_backend.sql_dict import WordCount, WordOccurrences, SimpleDict
-from search_backend.tokenizer_stemmer import TokenizerStemmer
+from search_backend.dto.sql_dict import WordCount, WordOccurrences, SimpleDict
+from search_backend.scoring_model.relevance_model import ScoringModel
+from search_backend.text_processing.tokenizer_stemmer import ToktokTokeniserStemmer
+
+DIR = os.path.dirname(os.path.realpath(__file__))
 
 
 def get_features_mapping(amount):
@@ -22,15 +25,17 @@ def get_features_mapping(amount):
 
 
 class WikiPageIndex:
-    def __init__(self, file_id, xml):
+    def __init__(self, file_id, xml, line_number):
         self.file_id = file_id
         self.xml = xml
+        self.start = line_number
         self.body_index = BodyIndex()
         self.anchor_index = AnchorIndex()
         self.title_index = TitleIndex()
         self.links = None
 
     def build_index(self):
+        TextIndex.start.set(self.file_id, self.start)
         self.links = self.get_links(self.xml.xpath("string()"))
         self.body_index.process_text(self.get_text(), self.file_id)
         self.title_index.process_text(self.get_title(), self.file_id)
@@ -55,13 +60,13 @@ class WikiPageIndex:
             doc_features = list()
             covered_term_number = WikiPageIndex.get_covered_term_number(doc_id, query_terms)
             stream_length = WikiPageIndex.get_stream_length(doc_id)
-            idf = WikiPageIndex.get_idf(docs, query_terms)
+            # idf = WikiPageIndex.get_idf(docs, query_terms)
             tf = WikiPageIndex.get_tf(doc_id, query_terms)
-            tf_idf_features = WikiPageIndex.get_tf_idf_features(doc_id)
+            tf_idf_features = WikiPageIndex.get_tf_idf_features(query_terms, doc_id)
             doc_features += covered_term_number   # 1 2 3
             doc_features += [feature / len(query_terms) for feature in covered_term_number]  # 6 7 8
             doc_features += stream_length  # 11 12 13
-            doc_features += idf  # 16 17 18
+            # doc_features += idf  # 16 17 18
             doc_features += [sum(feature) for feature in tf]  # 21 22 23
             doc_features += [min(feature) for feature in tf]  # 26 27 28
             doc_features += [max(feature) for feature in tf]  # 31 32 33
@@ -72,12 +77,12 @@ class WikiPageIndex:
             doc_features += [max(feature) / length for feature, length in zip(tf, stream_length)]  # 56 57 58
             doc_features += [np.mean(feature) / length for feature, length in zip(tf, stream_length)]  # 61 62 63
             doc_features += [np.var(feature) / length for feature, length in zip(tf, stream_length)]  # 66 67 68
-            doc_features += tf_idf_features
+            doc_features += tf_idf_features # 71 72 73 76 77 78 81 82 83 86 87 88 91 92 93
             all_features.append(doc_features)
 
-        print(['{0}:{1}'.format(number, feature)
-               for feature, number in
-               zip(all_features[0], get_features_mapping(len(all_features[0])))])
+        # print(['{0}:{1}'.format(number, feature)
+        #        for feature, number in
+        #        zip(all_features[0], get_features_mapping(len(all_features[0])))])
         return all_features
 
     @staticmethod
@@ -105,11 +110,11 @@ class WikiPageIndex:
                 TitleIndex.get_tf(doc_id, terms)]
 
     @staticmethod
-    def get_tf_idf_features(doc_id):
+    def get_tf_idf_features(terms, doc_id):
         output_features = []
-        body_features = BodyIndex.get_tf_idf_features(doc_id)
-        anchor_features = AnchorIndex.get_tf_idf_features(doc_id)
-        title_features = TitleIndex.get_tf_idf_features(doc_id)
+        body_features = BodyIndex.get_tf_idf_features(terms, doc_id)
+        anchor_features = AnchorIndex.get_tf_idf_features(terms, doc_id)
+        title_features = TitleIndex.get_tf_idf_features(terms, doc_id)
 
         for f1, f2, f3 in zip(body_features, anchor_features, title_features):
             output_features += [f1, f2, f3]
@@ -118,7 +123,8 @@ class WikiPageIndex:
 
 class TextIndex:
     stream_length = SimpleDict('stream_length')
-    tokenizer_stemmer = TokenizerStemmer()
+    start = SimpleDict('start', bulk_limit=100)
+    tokenizer_stemmer = ToktokTokeniserStemmer()
     word_occurrences = WordOccurrences('text')
     word_count = WordCount('text')
     cache_next = defaultdict(dict)
@@ -129,16 +135,26 @@ class TextIndex:
     tf = defaultdict(dict)
 
     @classmethod
+    def drop(cls):
+        cls.stream_length.drop()
+        cls.word_count.drop()
+        cls.word_occurrences.drop()
+        TextIndex.start.drop()
+        cls.idf.drop()
+
+    @classmethod
     def process_text(cls, text, file_id):
         """Build index for the file"""
         cls.stream_length.set(file_id, len(text))
-        for start, end, stemmed_word in cls.tokenizer_stemmer.span_tokenize(text):
-            cls.word_occurrences.append(file_id, stemmed_word, start)
-            cls.word_count.increment(file_id, stemmed_word, 1)
+        temp_word_count = defaultdict(int)
+        for w_position, stemmed_word in cls.tokenizer_stemmer.tokenize(text):
+            cls.word_occurrences.set(file_id, stemmed_word, w_position)
+            temp_word_count[stemmed_word] += 1
+        cls.word_count.insert(file_id, temp_word_count)
 
     @classmethod
     def binary_search(cls, term, file_id, low, high, current, mode=True):
-        occurrence_list = cls.word_occurrences.select_positions(file_id, term)
+        occurrence_list = list(cls.word_occurrences.select_positions(file_id, term))
 
         while high - low > 1:
             middle = int((low + high) / 2)
@@ -157,7 +173,7 @@ class TextIndex:
     @classmethod
     def next(cls, term, file_id, current):
         """Get a next occurrence of a term in the document after the current position"""
-        occurrence_list = cls.word_occurrences.select_positions(file_id, term)
+        occurrence_list = list(cls.word_occurrences.select_positions(file_id, term))
         curr_cache = cls.cache_next[term][file_id] if file_id in cls.cache_next[term] else 0
 
         if len(occurrence_list) == 0 or occurrence_list[-1] <= current:
@@ -183,7 +199,7 @@ class TextIndex:
     @classmethod
     def prev(cls, term, file_id, current):
         """Get a previous occurrence of a term in the document before the current position"""
-        occurrence_list = cls.word_occurrences.select_positions(file_id, term)
+        occurrence_list = list(cls.word_occurrences.select_positions(file_id, term))
         curr_cache = cls.cache_prev[term][file_id] if file_id in cls.cache_prev[term] else 0
         if len(occurrence_list) == 0 or occurrence_list[0] >= current:
             return None
@@ -267,15 +283,8 @@ class TextIndex:
 
     @classmethod
     def calc_idf(cls):
-        docs = cls.word_count.select()
-        for doc in docs:
-            if doc['count'] > 0:
-                cls.idf.increment(doc['word'], 1)
-
-        doc_amount = cls.word_count.doc_amount()
-
-        for doc in cls.idf.select():
-            cls.idf.set(doc['key'], math.log(doc_amount / (1 + doc['value'])))
+        for word in cls.word_occurrences.get_df():
+            cls.idf.set(word['_id'], word['df'])
 
     @classmethod
     def get_docs_query_intersection(cls, terms):
@@ -326,11 +335,17 @@ class TextIndex:
         return tf
 
     @classmethod
-    def get_tf_idf_features(cls, doc_id):
+    def get_tf_idf_features(cls, terms, doc_id):
         # TODO this tf-idf is without zeros
         tf_idf = []
-        for word in cls.word_count.select_words(doc_id):
-            tf_idf.append(cls.word_count.select_count(doc_id, word) * cls.idf.select_value(word))
+        doc_amount = cls.word_count.doc_amount()
+
+        for word in terms:
+            df = cls.idf.select_value(word)
+            df = df if df else 0
+            tf = cls.word_count.select_count(doc_id, word)
+            tf = tf if tf else 0
+            tf_idf.append(tf * math.log(doc_amount / (1 + df)))
         return [sum(tf_idf),
                 min(tf_idf),
                 max(tf_idf),
@@ -342,6 +357,8 @@ class TextIndex:
         cls.word_occurrences.execute_bulk()
         cls.word_count.execute_bulk()
         cls.stream_length.execute_bulk()
+        TextIndex.start.execute_bulk()
+        print('started idf calculation')
         cls.calc_idf()
         cls.idf.execute_bulk()
 
@@ -377,10 +394,10 @@ class AnchorIndex(TextIndex):
 
 
 class WikiIndex:
-    def __init__(self):
-        self.pages = dict()
+    def __init__(self, path):
+        self.dump_path = path
         self.last_file_id = 0
-        self.scoring_model = ScoringModel()
+        self.scoring_model = ScoringModel().load_model()
 
     def build_index_root(self, root_path):
         """Build index for all files in the directory"""
@@ -390,14 +407,17 @@ class WikiIndex:
                     self.build_index_file(os.path.join(dirName, file_name))
         return self
 
-    def build_index_file(self, file_path):
+    def build_index_file(self, file_name=None):
         """Build index for one file"""
-        for xml in self.read_wiki_file(file_path):
-            print("doc id: ", self.last_file_id)
-            self.pages[self.last_file_id] = WikiPageIndex(xml=xml, file_id=self.last_file_id)
-            self.pages[self.last_file_id].build_index()
+        if not file_name:
+            file_name = self.dump_path
+        BodyIndex.drop()
+        AnchorIndex.drop()
+        TitleIndex.drop()
+        for xml, line_number in tqdm(self.read_wiki_file(file_name)):
+            WikiPageIndex(xml=xml, file_id=self.last_file_id, line_number=line_number).build_index()
             self.last_file_id += 1
-            if self.last_file_id > 100:
+            if self.last_file_id > 2000:
                 break
 
         BodyIndex.execute_bulk()
@@ -406,7 +426,7 @@ class WikiIndex:
         return self
 
     @staticmethod
-    def read_wiki_file(file_path):
+    def read_wiki_file_bz2(file_path):
         """Read wiki documents from bz2 wiki dump"""
         with bz2.open(file_path) as f:
             page = ''
@@ -420,38 +440,88 @@ class WikiIndex:
                 elif page != '':
                     page += '\n' + line
 
+    @staticmethod
+    def read_wiki_file(file_path):
+        """Read wiki documents from wiki dump"""
+        beginning = 0
+        with open(file_path) as f:
+            page = ''
+            for line_number, line in enumerate(f):
+                line = line.strip()
+                if line == '<page>':
+                    beginning = line_number
+                    page = line
+                elif line == '</page>':
+                    page += '\n' + line
+                    yield etree.fromstring(page), beginning
+                elif page != '':
+                    page += '\n' + line
+
+    @staticmethod
+    def get_xml(file_path, number):
+        with open(file_path) as f:
+            page = ''
+            for line_number, line in enumerate(f):
+                if line_number < number:
+                    continue
+                line = line.strip()
+                if line == '<page>':
+                    page = line
+                elif line == '</page>':
+                    page += '\n' + line
+                    return etree.fromstring(page)
+                elif page != '':
+                    page += '\n' + line
+
     def search_query(self, query):
         """Find relevant documents for the query"""
         matched_ids = []
         matched_in_text = dict()
 
-        query_terms = TextIndex.tokenizer_stemmer.tokenize(query)
+        query_terms = [word for _, word in TextIndex.tokenizer_stemmer.tokenize(query)]
 
         found_docs = BodyIndex.get_docs_query_intersection(query_terms)
-        docs_features = WikiPageIndex.get_features(query_terms, found_docs)
+        print('Length of first filtering: ', len(found_docs))
 
-        relevant_docs = self.scoring_model.predict(docs_features)
-
-        for document_id in relevant_docs:
+        for document_id in found_docs:
             found = BodyIndex.next_phrase(query_terms, document_id, 0, len(query))
             if found:
                 matched_ids.append(document_id)
                 matched_in_text[document_id] = found
+        print('Length of second filtering: ', len(matched_ids))
+        docs_features = WikiPageIndex.get_features(query_terms, matched_ids)
+        docs_relevance = self.scoring_model.predict(docs_features)
+        docs_relevance = list(docs_relevance[:, 1])
 
-    def build_query_features(self):
-        pass
+        matched_docs = []
+        for score, document_id in sorted(zip(docs_relevance, matched_ids),
+                                         key=lambda x: x[0], reverse=True)[:10]:
+            document_line_number = TextIndex.start.select_value(document_id)
+            xml = self.get_xml(self.dump_path, document_line_number)
 
+            matched_docs.append(
+                {
+                    'title': self.get_title(xml),
+                    'snippet': self.get_snippet(xml, matched_in_text[document_id]),
+                    'href': 'http://www.{0}.com'.format(document_id),
+                    'score': score
+                })
+        return matched_docs
 
-class ScoringModel:
-    def predict(self, features):
-        raise NotImplementedError
+    def get_title(self, xml):
+        return xml.xpath("//title")[0].text
+
+    def get_snippet(self, xml, matched):
+        return TextIndex.tokenizer_stemmer.get_snippet(
+            matched[0], matched[1], xml.xpath("//text")[0].text)
 
 
 if __name__ == '__main__':
-    if 1:
-        wiki_files = WikiIndex().build_index_file('../../enwiki-20171020-pages-articles1.xml-p10p30302.bz2')
-        # wiki_files.save_index('wiki_index.pkl')
-        wiki_files.search_query('war world')
+    DUMP_PATH = '../../enwiki-20171020-pages-articles1.xml-p10p30302'
+    if 0:
+        wiki_files = WikiIndex(DUMP_PATH).build_index_file()
+        print('Index ready')
     else:
-        wiki_files = WikiIndex.load_index('wiki_index.pkl')
-        print(BodyIndex.word_occurrences)
+        wiki_files = WikiIndex(DUMP_PATH)
+    result = wiki_files.search_query('world war II')
+    print(result)

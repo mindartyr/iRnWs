@@ -1,39 +1,33 @@
 from collections import defaultdict
 
 from pymongo import MongoClient, IndexModel, ASCENDING, TEXT
-from pymongo import InsertOne, DeleteMany, ReplaceOne, UpdateOne
+from pymongo import UpdateOne
 from pymongo.errors import BulkWriteError
 
 
 # TODO: try with sql instead of mongodb
 
 class WordCount:
-    def __init__(self, name, bulk_limit=1000):
+    def __init__(self, name, bulk_limit=1000000):
         self.client = MongoClient('localhost', 27017)
         self.db = self.client.websearch
         self.cl = self.db['word_count_{0}'.format(name)]
-        self.cl.drop()
         self.bulk_write = []
-        self.bulk_update = defaultdict(int)
         self.bulk_limit = bulk_limit
+
+    def drop(self):
+        self.cl.drop()
         self.cl.create_index([("document", ASCENDING), ("word", 1)], unique=True)
 
     def execute_bulk(self):
         if len(self.bulk_write) > 0:
             try:
-                self.cl.insert_many(self.bulk_write)
+                self.cl.insert_many(self.bulk_write, ordered=False)
             except BulkWriteError as e:
                 print(e.details)
                 raise
 
-        update = []
-        for key, value in self.bulk_update.items():
-            update.append(UpdateOne({'document': key[0], 'word': key[1]},
-                                    {'$inc': {'count': value}}, upsert=True))
-        if len(update) > 0:
-            self.cl.bulk_write(update, ordered=False)
         self.bulk_write = []
-        self.bulk_update = defaultdict(int)
 
     def check_bulk(self):
         if len(self.bulk_write) > self.bulk_limit:
@@ -43,9 +37,10 @@ class WordCount:
         self.check_bulk()
         self.bulk_write.append({'word': word, 'document': document, 'count': count})
 
-    def increment(self, document, word, count):
+    def insert(self, document, word_dict):
         self.check_bulk()
-        self.bulk_update[(document, word)] += count
+        for word in word_dict:
+            self.bulk_write.append({'word': word, 'document': document, 'count': word_dict[word]})
 
     def select_count(self, document, word):
         found = self.cl.find_one({'word': word, 'document': document})
@@ -62,32 +57,25 @@ class WordCount:
 
 
 class WordOccurrences:
-    def __init__(self, name, bulk_limit=1000):
+    def __init__(self, name, bulk_limit=1000000):
         self.client = MongoClient('localhost', 27017)
         self.db = self.client.websearch
         self.cl = self.db['word_occurrences_{0}'.format(name)]
-        self.cl.drop()
         self.bulk_write = []
-        self.bulk_update = defaultdict(list)
         self.bulk_limit = bulk_limit
-        self.cl.create_index([("word", 1), ("document", ASCENDING)], unique=True)
+
+    def drop(self):
+        self.cl.drop()
+        self.cl.create_index([("word", 1), ("document", ASCENDING)])
 
     def execute_bulk(self):
         if len(self.bulk_write) > 0:
             try:
-                self.cl.insert_many(self.bulk_write)
+                self.cl.insert_many(self.bulk_write, ordered=False)
             except BulkWriteError as e:
                 print(e.details)
                 raise
-
-        update = []
-        for key, value in self.bulk_update.items():
-            update.append(UpdateOne({'document': key[0], 'word': key[1]},
-                                    {'$push': {'position': {'$each': value}}}, upsert=True))
-        if len(update) > 0:
-            self.cl.bulk_write(update, ordered=False)
         self.bulk_write = []
-        self.bulk_update = defaultdict(list)
 
     def check_bulk(self):
         if len(self.bulk_write) > self.bulk_limit:
@@ -95,24 +83,30 @@ class WordOccurrences:
 
     def set(self, document, word, position):
         self.check_bulk()
-        self.bulk_write.append({'word': word, 'document': document, 'position': [position]})
+        self.bulk_write.append({'word': word, 'document': document, 'position': position})
 
-    def append(self, document, word, position):
+    def insert(self, document, word_dict):
         self.check_bulk()
-        self.bulk_update[(document, word)].append(position)
+        for word, position in word_dict:
+            self.bulk_write.append({'word': word, 'document': document, 'position': position})
 
     def select_positions(self, document, word):
-        found = self.cl.find_one({'word': word, 'document': document})
-        return found['position'] if found else []
+        found = self.cl.find({'word': word, 'document': document})
+        for res in found:
+            yield res['position']
 
     def select_documents(self, word):
-        return [elem['document'] for elem in self.cl.find({'word': word})]
+        return self.cl.find({'word': word}).distinct('document')
 
-    def select(self):
-        return self.cl.find()
+    def get_words(self):
+        return self.cl.distinct('word')
 
-    def doc_amount(self):
-        return len(self.cl.distinct('document'))
+    def get_df(self):
+        result = self.cl.aggregate([
+            {'$group': {'_id': '$word', 'df1': {'$addToSet': '$document'}}},
+            {'$project': {'df': {'$size': "$df1"}}}
+        ])
+        return result
 
 
 class SimpleDict:
@@ -120,16 +114,18 @@ class SimpleDict:
         self.client = MongoClient('localhost', 27017)
         self.db = self.client.websearch
         self.cl = self.db[name]
-        self.cl.drop()
         self.bulk_write = []
         self.bulk_update = defaultdict(int)
         self.bulk_limit = bulk_limit
+
+    def drop(self):
+        self.cl.drop()
         self.cl.create_index([("key", 1)], unique=True)
 
     def execute_bulk(self):
         if len(self.bulk_write) > 0:
             try:
-                self.cl.insert_many(self.bulk_write)
+                self.cl.insert_many(self.bulk_write, ordered=False)
             except BulkWriteError as e:
                 print(e.details)
                 raise

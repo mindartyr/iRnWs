@@ -2,10 +2,12 @@ import os
 import numpy as np
 import pickle
 from catboost import CatBoostClassifier, cv, Pool
+from sklearn.preprocessing import MinMaxScaler
 
 
-MSLR_PATH = '../../MSLR-WEB10K'
-MSLR_DUMPS_PATH = '../../mslr_dumps'
+MSLR_PATH = '../../../MSLR-WEB10K'
+MSLR_DUMPS_PATH = '../../../mslr_dumps'
+DIR = os.path.dirname(os.path.realpath(__file__))
 
 
 def parse_file(g):
@@ -48,6 +50,16 @@ def init_folds():
             return
 
 
+def get_features_mapping(amount):
+    output = []
+    i = 1
+    while len(output) < amount:
+        if i % 5 != 0 and i % 5 != 4:
+            output.append(i)
+        i += 1
+    return output
+
+
 def load_folds():
     for fold_name in os.listdir(MSLR_DUMPS_PATH):
         with open(os.path.join(MSLR_DUMPS_PATH, fold_name), 'rb') as f:
@@ -55,37 +67,41 @@ def load_folds():
 
 
 def filter_features(np_array):
-    exclude = [0] + list(range(101, 126)) + [128] + list(range(131, 137))
-    return np.delete(np_array, exclude, axis=1)
+    include = get_features_mapping(19 * 3)
+    include.remove(16)
+    include.remove(17)
+    include.remove(18)
+    return MinMaxScaler().fit_transform(np_array[:, include])
 
 
-def train_model():
-    fold_name, fold = next(load_folds())
-    train = fold['train']
-    eval_set = fold['vali']
+def modify_answers(np_array):
+    np_array[np_array == 1] = 0
+    np_array[np_array == 2] = 1
 
-    cat_features = [96, 97, 98, 99, 100]
-    model = CatBoostClassifier(custom_loss=['Accuracy'])
-    print('Started training')
+    np_array[np_array == 3] = 1
+    np_array[np_array == 4] = 1
 
-    model.fit(
-        train['X'], train['y'],
-        cat_features=cat_features,
-        eval_set=(eval_set['X'], eval_set['y']),
-        verbose=True,  # you can uncomment this for text output
-        plot=True
-    )
-
-    # cv_data = cv(
-    #     model.get_params(),
-    #     Pool(train['X'], label=train['y'], cat_features=cat_features),
-    # )
-    #
-    # print('Best validation accuracy score: {:.2f}±{:.2f} on step {}'.format(
-    #     np.max(cv_data['Accuracy_test_avg']),
-    #     cv_data['Accuracy_test_stddev'][np.argmax(cv_data['Accuracy_test_avg'])],
-    #     np.argmax(cv_data['Accuracy_test_avg'])))
+    return np_array
 
 
-if __name__ == '__main__':
-    train_model()
+def oversample(X, y):
+    repeat_factor = int(len(y[y==0]) / len(y[y==1]))
+    new_X = np.concatenate((X[y==0], X[y==1].repeat(repeat_factor, axis=0)), axis=0)
+    new_y = np.concatenate((y[y==0], y[y==1].repeat(repeat_factor, axis=0)), axis=0)
+    return new_X, new_y
+
+
+class ScoringModel:
+    def __init__(self):
+        self.model = None
+
+    def load_model(self):
+        with open(os.path.join(DIR, 'catboost_model.pkl'), 'rb') as f:
+            self.model = pickle.load(f)
+        return self
+
+    def predict(self, X, scale=True):
+        if scale:
+            X = MinMaxScaler().fit_transform(X)
+        return self.model.predict_proba(X)
+

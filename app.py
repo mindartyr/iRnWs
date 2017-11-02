@@ -1,20 +1,21 @@
 import os
 from flask import Flask, render_template, jsonify, abort, request
-from flask import url_for
 
-import search_backend
-from search_backend.language_models import NGramModel
-from search_backend.text_index import TextIndex
+from search_backend.language_models.language_models import NGramModel
+from search_backend.wiki_index import WikiIndex
 
 app = Flask(__name__)
+DIR = os.path.dirname(os.path.realpath(__file__))
 
 DATA_PATH = 'data/python-3.6.3-docs-text'
 INIT = 0
+DUMP_PATH = os.path.join(DIR, '../enwiki-20171020-pages-articles1.xml-p10p30302')
 
 if INIT:
-    text_index = TextIndex().build_index(DATA_PATH)
+    text_index = WikiIndex(DUMP_PATH).build_index_file()
+    print('Index ready')
 else:
-    text_index = TextIndex.load_index()
+    text_index = WikiIndex(DUMP_PATH)
 language_model_en = NGramModel(3, 'en').process_dir(DATA_PATH)
 
 
@@ -34,11 +35,11 @@ def search():
     suggested_query = language_model_en.spell_check(query)
 
     if query.startswith(("'", '"')) and query.endswith(("'", '"')):
-        found_docs = text_index.process_query(query)
+        found_docs = text_index.search_query(query)
     elif ' AND ' in query or ' OR ' in query:
-        found_docs = text_index.process_conditional_query(query)
+        found_docs = text_index.search_query(query)
     else:
-        found_docs = text_index.process_query(query)
+        found_docs = text_index.search_query(query)
 
     return jsonify(
         results=found_docs,

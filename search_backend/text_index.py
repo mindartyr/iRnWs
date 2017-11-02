@@ -1,10 +1,9 @@
-import os
-from collections import defaultdict
-import pickle
-
 import math
+import os
+import pickle
+from collections import defaultdict
 
-from search_backend.tokenizer_stemmer import TokenizerStemmer
+from search_backend.text_processing.tokenizer_stemmer import TokenizerStemmer
 
 ROOT_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../data/python-3.6.3-docs-text')
 

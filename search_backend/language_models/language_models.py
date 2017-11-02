@@ -1,8 +1,9 @@
-import os
 from collections import defaultdict
-from search_backend.tokenizer_stemmer import TokenizerStemmer, process_dir, Tokenizer
+
 from nltk import ngrams
 from nltk.tokenize import sent_tokenize
+
+from search_backend.text_processing.tokenizer_stemmer import process_dir, Tokenizer
 
 LETTERS= 'abcdefghijklmnopqrstuvwxyz'
 
