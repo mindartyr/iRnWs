@@ -48,6 +48,10 @@
                                         .addClass('card-text snippet')
                                         .html(item.snippet)
                                 )
+                                .append(
+                                    $('<p></p>')
+                                        .text(item.score)
+                                )
                         );
                     });
                 }).fail(function (error) {

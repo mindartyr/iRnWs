@@ -105,7 +105,7 @@ class WordOccurrences:
         result = self.cl.aggregate([
             {'$group': {'_id': '$word', 'df1': {'$addToSet': '$document'}}},
             {'$project': {'df': {'$size': "$df1"}}}
-        ])
+        ], allowDiskUse=True)
         return result
 
 

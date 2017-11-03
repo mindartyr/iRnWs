@@ -69,9 +69,10 @@ class ToktokTokeniserStemmer:
     def get_snippet(self, beginning, end, text):
         snippet = []
         for w_number, word in enumerate(self.tokenizer.tokenize(text)):
-            if w_number < beginning:
+            if w_number < beginning-10:
                 continue
             else:
                 snippet.append(word)
-                if len(snippet) > end-beginning + 15:
+                if len(snippet) > end-beginning + 20:
                     return ' '.join(snippet)
+        return ' '.join(snippet)

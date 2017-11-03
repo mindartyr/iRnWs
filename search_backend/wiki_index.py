@@ -414,8 +414,8 @@ class WikiIndex:
         BodyIndex.drop()
         AnchorIndex.drop()
         TitleIndex.drop()
-        for xml, line_number in tqdm(self.read_wiki_file(file_name)):
-            WikiPageIndex(xml=xml, file_id=self.last_file_id, line_number=line_number).build_index()
+        for xml, line_number, page_id in tqdm(self.read_wiki_file(file_name)):
+            WikiPageIndex(xml=xml, file_id=page_id, line_number=line_number).build_index()
             self.last_file_id += 1
             if self.last_file_id > 2000:
                 break
@@ -444,6 +444,7 @@ class WikiIndex:
     def read_wiki_file(file_path):
         """Read wiki documents from wiki dump"""
         beginning = 0
+        page_id = 0
         with open(file_path) as f:
             page = ''
             for line_number, line in enumerate(f):
@@ -453,7 +454,8 @@ class WikiIndex:
                     page = line
                 elif line == '</page>':
                     page += '\n' + line
-                    yield etree.fromstring(page), beginning
+                    yield etree.fromstring(page), beginning, page_id
+                    page_id += 1
                 elif page != '':
                     page += '\n' + line
 
